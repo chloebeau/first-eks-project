@@ -1,0 +1,78 @@
+#To install eksctl and kubectl:
+ curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+ sudo mv /tmp/eksctl /usr/local/bin
+
+ curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+ sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+ 
+#Setting the environment variables:
+ export ACCOUNT_ID=$(aws sts get-caller-identity --output text --query Account)
+ export REGION="`wget -q -O - http://169.254.169.254/latest/meta-data/placement/region`"
+ aws ecr get-login-password | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com
+
+ #Creating ECR repositories:
+ aws ecr create-repository --repository-name "corpdirectory/service"
+ aws ecr create-repository --repository-name "corpdirectory/frontend"
+
+ #Pushing images to repos:
+ docker push ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/corpdirectory/service:latest
+ docker push ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/corpdirectory/frontend:latest
+
+ #IAM policy for dynamodb table:
+  aws iam create-policy \
+ --policy-name eks-directory-service \
+ --policy-document "{
+ \"Version\": \"2012-10-17\",
+ \"Statement\": [ { \"Effect\": \"Allow\", \"Action\": [ \"dynamodb:GetItem\", \"dynamodb:Query\", \"dynamodb:Scan\", \"dynamodb:DeleteItem\", \"dynamodb:UpdateItem\", \"dynamodb:PutItem\" ],
+ \"Resource\": [ \"arn:aws:dynamodb:${REGION}:${ACCOUNT_ID}:table/Employees\"] } ]
+ }"
+#Copying the ARN after policy is created 
+#Opening corps-eks-cluster.yaml file, then replacing the attachpolicyARNs with the one I made, and putting my Region in the FMI for metadata.region
+#Then opening the deployment.yaml file and replacing the FMI with container image for directory service
+#Save and returning to deployment.yaml file, this time replacing the same FMI with an image for the frontend service, save the file
+
+#CREATING THE CLUSTER :) 
+
+#Command:
+ eksctl create cluster -f corp-eks-cluster.yaml
+#Waiting and hydrating
+
+#Viewing config file here:
+ cat ~/.kube/config
+
+#Using kubectl to retrieve namespaces:
+ kubectl get all --all-namespaces
+
+#Deploy the app to k8's:
+ kubectl apply -f directory-service/kubernetes/deployment.yaml
+ kubectl apply -f directory-service/kubernetes/service.yaml
+
+#Exec to service pod, run some commands, exit container:
+ kubectl exec -i -t service/directory-service -- /bin/bash
+ ls -l
+ ps -x
+ exit
+
+#port forward to Cloud9 environment:
+ kubectl port-forward  service/directory-service 5000:80
+
+#Then opening new terminal to run this command: 
+ curl http://localhost:5000/employee
+
+#Now closing that terminal, exit port-forward with Ctrl+C
+
+#Deploying the front end service and finding the endpoint for it:
+ kubectl apply -f directory-frontend/kubernetes/deployment.yaml
+ kubectl apply -f directory-frontend/kubernetes/service.yaml
+ kubectl get service directory-frontend
+
+#Check logs post-deployment:
+ kubectl logs service/directory-frontend
+
+#Now deleting these resources so I don't run up an AWS tab lol 
+ kubectl delete -f directory-service/kubernetes/deployment.yaml
+ kubectl delete -f directory-service/kubernetes/service.yaml
+ kubectl delete -f directory-frontend/kubernetes/deployment.yaml
+ kubectl delete -f directory-frontend/kubernetes/service.yaml
+ eksctl delete cluster -f corp-eks-cluster.yaml
+ 
